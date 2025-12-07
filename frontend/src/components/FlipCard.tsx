@@ -84,13 +84,23 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
 
           <div className="space-y-4 flex-1">
             <div className="grid grid-cols-2 gap-4">
-              <div>
+              <div className="group/meaning cursor-help relative">
                 <span className="text-xs text-slate-500 uppercase">Englisch</span>
-                <p className="font-medium">{data.Bedeutung.Englisch.join(', ')}</p>
+                <p className="font-medium blur-sm group-hover/meaning:blur-none transition-all duration-200">
+                  {data.Bedeutung.Englisch.join(', ')}
+                </p>
+                <div className="absolute inset-0 flex items-center justify-center opacity-100 group-hover/meaning:opacity-0 transition-opacity pointer-events-none">
+                  <span className="text-xs text-slate-400">Hover to reveal</span>
+                </div>
               </div>
-              <div>
+              <div className="group/meaning cursor-help relative">
                 <span className="text-xs text-slate-500 uppercase">Indonesisch</span>
-                <p className="font-medium">{data.Bedeutung.Indonesisch.join(', ')}</p>
+                <p className="font-medium blur-sm group-hover/meaning:blur-none transition-all duration-200">
+                  {data.Bedeutung.Indonesisch.join(', ')}
+                </p>
+                <div className="absolute inset-0 flex items-center justify-center opacity-100 group-hover/meaning:opacity-0 transition-opacity pointer-events-none">
+                  <span className="text-xs text-slate-400">Hover to reveal</span>
+                </div>
               </div>
             </div>
 
