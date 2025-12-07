@@ -1,9 +1,9 @@
 import type { AppState, Library, WordProgress } from '../types';
 
-export const MAX_UNIQUE_WORDS_PER_DAY = 10;
-export const MAX_FAILURES_PER_DAY = 3; 
-export const REQUIRED_SUCCESSES_PER_DAY = 3;
-export const ITEMS_PER_QUIZ_BATCH = 5;
+export const MAX_UNIQUE_WORDS_PER_DAY = 20;
+export const MAX_FAILURES_PER_DAY = 2; 
+export const REQUIRED_SUCCESSES_PER_DAY = 2;
+export const ITEMS_PER_QUIZ_BATCH = MAX_UNIQUE_WORDS_PER_DAY; // Or we can simply reduce this amount into 5 or 10
 
 // Initialize or Reset Daily Session Logic
 export const getSessionState = (currentState: AppState): AppState => {
