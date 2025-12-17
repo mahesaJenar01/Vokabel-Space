@@ -1,9 +1,9 @@
 import type { AppState, Library, WordProgress } from '../types';
 
-export const MAX_UNIQUE_WORDS_PER_DAY = 20;
+export const MAX_UNIQUE_WORDS_PER_DAY = 50;
 export const MAX_FAILURES_PER_DAY = 2; 
 export const REQUIRED_SUCCESSES_PER_DAY = 2;
-export const ITEMS_PER_QUIZ_BATCH = MAX_UNIQUE_WORDS_PER_DAY; // Or we can simply reduce this amount into 5 or 10
+export const ITEMS_PER_QUIZ_BATCH = 10;
 
 // Initialize or Reset Daily Session Logic
 export const getSessionState = (currentState: AppState): AppState => {
@@ -42,15 +42,20 @@ const calculateUrgencyScore = (progress: WordProgress | undefined, now: number):
 
   let score = 0;
 
+  // NEW: Hard words get a slight bump in priority if not mastered
+  if (progress.isHard && progress.status !== 'mastered_today') {
+    score += 30;
+  }
+
   // 1. CRITICAL: Failed today (highest priority)
   if (progress.todayFailCount > 0) {
-    score += 100 + (progress.todayFailCount * 20); // 120, 140, 160...
+    score += 100 + (progress.todayFailCount * 20); 
   }
 
   // 2. Overdue items get exponentially higher priority
   if (progress.dueDate > 0 && progress.dueDate <= now) {
     const daysOverdue = Math.floor((now - progress.dueDate) / (24 * 60 * 60 * 1000));
-    score += 60 + (daysOverdue * 15); // More overdue = more urgent
+    score += 60 + (daysOverdue * 15); 
   }
 
   // 3. Learning items that haven't been mastered yet
@@ -63,25 +68,25 @@ const calculateUrgencyScore = (progress: WordProgress | undefined, now: number):
     score += 50;
   }
 
-  // 5. Items with partial success today (lower priority - spacing effect)
+  // 5. Items with partial success today
   if (progress.todaySuccessCount > 0 && progress.todaySuccessCount < REQUIRED_SUCCESSES_PER_DAY) {
-    score += Math.max(10, 30 - (progress.todaySuccessCount * 10)); // 20, 10
+    score += Math.max(10, 30 - (progress.todaySuccessCount * 10)); 
   }
 
-  // 6. Recent failure history penalty (shows difficulty pattern)
+  // 6. Recent failure history penalty
   const recentHistory = progress.history.slice(-5);
   const recentFailRate = recentHistory.filter(h => h === 'forget').length / recentHistory.length;
   if (recentFailRate > 0.5) {
-    score += 25; // Struggling words need more practice
+    score += 25; 
   }
 
-  // 7. Bonus for items due soon (proactive review)
+  // 7. Bonus for items due soon
   if (progress.dueDate > now) {
     const daysUntilDue = Math.floor((progress.dueDate - now) / (24 * 60 * 60 * 1000));
     if (daysUntilDue <= 1) {
-      score += 40; // Due tomorrow
+      score += 40; 
     } else if (daysUntilDue <= 3) {
-      score += 20; // Due in 2-3 days
+      score += 20; 
     }
   }
 
@@ -99,21 +104,18 @@ const weightedRandomSelection = (pool: string[], progress: Record<string, WordPr
     score: calculateUrgencyScore(progress[wordId], now)
   }));
 
-  // Convert scores to weights (ensure all weights are positive)
+  // Convert scores to weights
   const minScore = Math.min(...scoredItems.map(item => item.score));
   const adjustedItems = scoredItems.map(item => ({
     wordId: item.wordId,
-    weight: Math.max(1, item.score - minScore + 1) // Ensure minimum weight of 1
+    weight: Math.max(1, item.score - minScore + 1)
   }));
 
   const selected: string[] = [];
   const remaining = [...adjustedItems];
 
   for (let i = 0; i < count && remaining.length > 0; i++) {
-    // Calculate total weight for remaining items
     const currentTotalWeight = remaining.reduce((sum, item) => sum + item.weight, 0);
-    
-    // Random selection based on weights
     let random = Math.random() * currentTotalWeight;
     let selectedIndex = 0;
 
@@ -164,7 +166,7 @@ export const getDueWords = (state: AppState, library: Library): string[] => {
   // 3. Build result with weighted selection
   let result: string[] = [];
 
-  // Always include critical items first (failed today)
+  // Always include critical items first
   result.push(...criticalItems);
 
   // Add current session words with weighted selection
@@ -182,7 +184,7 @@ export const getDueWords = (state: AppState, library: Library): string[] => {
     result.push(...selectedCurrent);
   }
 
-  // Fill remaining slots with new words (weighted selection)
+  // Fill remaining slots with new words
   const remainingSlots = MAX_UNIQUE_WORDS_PER_DAY - state.dailyUniqueWords.length;
   
   if (remainingSlots > 0 && newPotentialWords.length > 0) {
@@ -214,6 +216,7 @@ export const updateWordProgress = (
   const nextState = { ...state };
   nextState.progress = { ...state.progress };
 
+  // Ensure 'isHard' defaults to false if creating new progress
   const progress: WordProgress = nextState.progress[wordId] 
     ? { ...nextState.progress[wordId] } 
     : {
@@ -224,9 +227,13 @@ export const updateWordProgress = (
         status: 'new',
         todayFailCount: 0,
         todaySuccessCount: 0,
-        history: []
+        history: [],
+        isHard: false // Default
       };
   
+  // Backwards compatibility check
+  if (typeof progress.isHard === 'undefined') progress.isHard = false;
+
   progress.history = [...progress.history];
   if (progress.todaySuccessCount === undefined) progress.todaySuccessCount = 0;
 
@@ -271,17 +278,16 @@ export const updateWordProgress = (
       let nextInterval = 1;
       
       if (progress.todayFailCount === 0) {
-        // Perfect recall - use exponential growth
+        // Perfect recall
         if (progress.interval === 0) {
           nextInterval = 1;
         } else if (progress.lastMaxInterval > 0 && progress.interval === 1) {
-          // Recovering from failure - jump back to previous mastery level
           nextInterval = progress.lastMaxInterval * 2;
         } else {
           nextInterval = Math.max(1, progress.interval * 2);
         }
       } else {
-        // Had struggles today - reset to 1 day
+        // Had struggles today
         nextInterval = 1; 
       }
   

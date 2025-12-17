@@ -7,9 +7,19 @@ interface FlipCardProps {
   descriptionIndex: number;
   onRate: (rating: 'remember' | 'forget') => void;
   initialRating?: 'remember' | 'forget' | null;
+  isHard: boolean;
+  onToggleHard: () => void;
 }
 
-const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onRate, initialRating }) => {
+const FlipCard: React.FC<FlipCardProps> = ({ 
+  wordId, 
+  data, 
+  descriptionIndex, 
+  onRate, 
+  initialRating,
+  isHard,
+  onToggleHard
+}) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [rating, setRating] = useState<'remember' | 'forget' | null>(initialRating || null);
 
@@ -24,6 +34,11 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
     onRate(type);
   };
 
+  const handleHardToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onToggleHard();
+  };
+
   const description = data.Beschreibung[descriptionIndex] || data.Beschreibung[0];
 
   return (
@@ -36,13 +51,27 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
         {/* Front Side */}
         <div className="absolute w-full h-full bg-white rounded-xl shadow-lg p-6 flex flex-col justify-between backface-hidden border border-slate-200">
           
+          {/* Status Indicators - Hard Button */}
+          <div className="absolute top-4 left-4 z-20">
+             <button 
+               onClick={handleHardToggle}
+               className={`p-2 rounded-full transition-colors cursor-pointer hover:bg-slate-100 ${isHard ? 'text-red-500' : 'text-slate-300'}`}
+               title="Als schwierig markieren"
+             >
+               {/* Warning/Alert Icon */}
+               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                 <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.401 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
+               </svg>
+             </button>
+          </div>
+
           {rating && (
             <div className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide z-10 ${rating === 'remember' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
               {rating === 'remember' ? 'Erinnern' : 'Vergessen'}
             </div>
           )}
 
-          <div className="flex-1 flex flex-col justify-center items-center text-center overflow-y-auto">
+          <div className="flex-1 flex flex-col justify-center items-center text-center overflow-y-auto mt-8">
             <div className="text-sm uppercase tracking-widest text-slate-400 font-bold mb-4">Beschreibung</div>
             <p className="text-xl text-slate-700 leading-relaxed font-medium">
               "{description}"
@@ -77,7 +106,19 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
 
         {/* Back Side */}
         <div className="absolute w-full h-full bg-slate-900 text-white rounded-xl shadow-xl p-6 flex flex-col backface-hidden rotate-y-180 overflow-y-auto">
-          <div className="text-center mb-6 border-b border-slate-700 pb-4">
+          <div className="absolute top-4 left-4 z-20">
+             <button 
+               onClick={handleHardToggle}
+               className={`p-2 rounded-full transition-colors cursor-pointer hover:bg-slate-800 ${isHard ? 'text-red-500' : 'text-slate-600'}`}
+               title="Als schwierig markieren"
+             >
+               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                 <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.401 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
+               </svg>
+             </button>
+          </div>
+
+          <div className="text-center mb-6 border-b border-slate-700 pb-4 mt-6">
             <h2 className="text-3xl font-bold text-brand-500 mb-1">{wordId}</h2>
             {data.Plural && <p className="text-sm text-slate-400">Plural: {data.Plural}</p>}
           </div>
@@ -90,7 +131,7 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
                   {data.Bedeutung.Englisch.join(', ')}
                 </p>
                 <div className="absolute inset-0 flex items-center justify-center opacity-100 group-hover/meaning:opacity-0 transition-opacity pointer-events-none">
-                  <span className="text-xs text-slate-400">Hover to reveal</span>
+                  <span className="text-xs text-slate-400">Hover</span>
                 </div>
               </div>
               <div className="group/meaning cursor-help relative">
@@ -99,7 +140,7 @@ const FlipCard: React.FC<FlipCardProps> = ({ wordId, data, descriptionIndex, onR
                   {data.Bedeutung.Indonesisch.join(', ')}
                 </p>
                 <div className="absolute inset-0 flex items-center justify-center opacity-100 group-hover/meaning:opacity-0 transition-opacity pointer-events-none">
-                  <span className="text-xs text-slate-400">Hover to reveal</span>
+                  <span className="text-xs text-slate-400">Hover</span>
                 </div>
               </div>
             </div>

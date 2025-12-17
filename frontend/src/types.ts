@@ -22,6 +22,7 @@ export interface WordProgress {
   todayFailCount: number;
   todaySuccessCount: number;
   history: ('remember' | 'forget')[]; 
+  isHard: boolean; // NEW FIELD
 }
 
 export interface AppState {
