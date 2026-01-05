@@ -3,7 +3,7 @@ import Header from './components/Header';
 import FlipCard from './components/FlipCard';
 import LibraryView from './components/LibraryView';
 import type { AppState, QuizItem, Library, WordProgress } from './types';
-import { getSessionState, getDueWords, updateWordProgress, ITEMS_PER_QUIZ_BATCH } from './utils/srsLogic';
+import { getSessionState, getDueWords, updateWordProgress, ITEMS_PER_QUIZ_BATCH, getRandomDescriptionIndex } from './utils/srsLogic';
 import { fetchLibrary, fetchUserState, saveUserState } from './api';
 
 const App: React.FC = () => {
@@ -13,6 +13,12 @@ const App: React.FC = () => {
   const [currentRatings, setCurrentRatings] = useState<Record<string, 'remember' | 'forget'>>({});
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [loading, setLoading] = useState(true);
+  
+  // Track last used description indices to avoid repetition
+  const [lastDescriptionIndices, setLastDescriptionIndices] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('vokabel_last_descriptions');
+    return saved ? JSON.parse(saved) : {};
+  });
   
   // Navigation State with Persistence
   const [currentView, setCurrentView] = useState<'quiz' | 'library'>(() => {
@@ -43,6 +49,30 @@ const App: React.FC = () => {
         // If date changed, we should save the reset state immediately
         if (processedState.lastSessionDate !== userData.lastSessionDate) {
           saveUserState(processedState);
+          // Clear quiz persistence on new day
+          localStorage.removeItem('vokabel_current_quiz');
+          localStorage.removeItem('vokabel_current_ratings');
+        } else {
+          // Try to restore quiz state from localStorage
+          const savedQuiz = localStorage.getItem('vokabel_current_quiz');
+          const savedRatings = localStorage.getItem('vokabel_current_ratings');
+          
+          if (savedQuiz && savedRatings) {
+            try {
+              const parsedQuiz = JSON.parse(savedQuiz);
+              const parsedRatings = JSON.parse(savedRatings);
+              
+              // Validate that the saved quiz items exist in library
+              const validQuiz = parsedQuiz.filter((item: QuizItem) => libData[item.wordId]);
+              
+              if (validQuiz.length > 0) {
+                setQuizQueue(validQuiz);
+                setCurrentRatings(parsedRatings);
+              }
+            } catch (e) {
+              console.error('Failed to restore quiz state', e);
+            }
+          }
         }
       } catch (error) {
         console.error("Failed to load data", error);
@@ -54,17 +84,39 @@ const App: React.FC = () => {
     initData();
   }, []);
 
+  // Save quiz state to localStorage whenever it changes
+  useEffect(() => {
+    if (quizQueue.length > 0) {
+      localStorage.setItem('vokabel_current_quiz', JSON.stringify(quizQueue));
+    }
+  }, [quizQueue]);
+
+  useEffect(() => {
+    if (Object.keys(currentRatings).length > 0) {
+      localStorage.setItem('vokabel_current_ratings', JSON.stringify(currentRatings));
+    }
+  }, [currentRatings]);
+
+  // Save last description indices to localStorage
+  useEffect(() => {
+    localStorage.setItem('vokabel_last_descriptions', JSON.stringify(lastDescriptionIndices));
+  }, [lastDescriptionIndices]);
+
   // Generate Quiz Queue
   useEffect(() => {
     if (!appState || !library) return;
 
     // Only regenerate queue if empty and session not marked complete
     if (quizQueue.length === 0 && !isSessionComplete) {
-      const dueWordIds = getDueWords(appState, library);
+      const currentBatchWordIds = quizQueue.map(item => item.wordId);
+      const dueWordIds = getDueWords(appState, library, currentBatchWordIds);
 
       if (dueWordIds.length === 0) {
         setIsSessionComplete(true);
         setQuizQueue([]);
+        // Clear persisted quiz state
+        localStorage.removeItem('vokabel_current_quiz');
+        localStorage.removeItem('vokabel_current_ratings');
         return;
       }
 
@@ -72,7 +124,15 @@ const App: React.FC = () => {
       
       const newQueue: QuizItem[] = batchIds.map(id => {
         const data = library[id];
-        const randomIndex = Math.floor(Math.random() * (data.Beschreibung.length || 1));
+        const lastIndex = lastDescriptionIndices[id];
+        const randomIndex = getRandomDescriptionIndex(data.Beschreibung, lastIndex);
+        
+        // Update last used index
+        setLastDescriptionIndices(prev => ({
+          ...prev,
+          [id]: randomIndex
+        }));
+        
         return {
           wordId: id,
           data: data,
@@ -83,7 +143,7 @@ const App: React.FC = () => {
       setQuizQueue(newQueue);
       setCurrentRatings({});
     }
-  }, [appState, library, isSessionComplete, quizQueue.length]);
+  }, [appState, library, isSessionComplete, quizQueue.length, lastDescriptionIndices]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -96,7 +156,6 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  // FIX: Functional state update to ensure UI re-renders immediately
   const handleHardToggle = useCallback(async (wordId: string) => {
     setAppState(prevState => {
       if (!prevState) return null;
@@ -114,7 +173,7 @@ const App: React.FC = () => {
             todayFailCount: 0,
             todaySuccessCount: 0,
             history: [],
-            isHard: true // Default to true if creating for the first time
+            isHard: true
           };
 
       const newState = {
@@ -146,6 +205,11 @@ const App: React.FC = () => {
     // Optimistic update
     setAppState(newState);
     setQuizQueue([]); // Clear queue to trigger regeneration or finish
+    
+    // Clear persisted quiz state since we're moving to next batch
+    localStorage.removeItem('vokabel_current_quiz');
+    localStorage.removeItem('vokabel_current_ratings');
+    
     // Save to Backend
     await saveUserState(newState);
   };

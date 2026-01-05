@@ -42,7 +42,7 @@ const calculateUrgencyScore = (progress: WordProgress | undefined, now: number):
 
   let score = 0;
 
-  // NEW: Hard words get a slight bump in priority if not mastered
+  // Hard words get a slight bump in priority if not mastered
   if (progress.isHard && progress.status !== 'mastered_today') {
     score += 30;
   }
@@ -134,14 +134,30 @@ const weightedRandomSelection = (pool: string[], progress: Record<string, WordPr
   return selected;
 };
 
-// Select words for the current session with weighted random selection
-export const getDueWords = (state: AppState, library: Library): string[] => {
+// Fisher-Yates shuffle algorithm
+const shuffleArray = <T,>(array: T[]): T[] => {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
+// NEW: Select words for the current session with better mixing and randomization
+export const getDueWords = (
+  state: AppState, 
+  library: Library,
+  alreadyInCurrentBatch: string[] = []
+): string[] => {
   const now = Date.now();
   const progress = state.progress;
   const libraryKeys = Object.keys(library);
 
-  // 1. Identify active pool: Not fully done for today
+  // 1. Identify active pool: Not fully done for today AND not in current batch
   const activePool = libraryKeys.filter(key => {
+    if (alreadyInCurrentBatch.includes(key)) return false;
+    
     const p = progress[key];
     if (!p) return true; // New words
     return p.status !== 'mastered_today' && p.status !== 'failed_today';
@@ -163,25 +179,32 @@ export const getDueWords = (state: AppState, library: Library): string[] => {
     !state.dailyUniqueWords.includes(key)
   );
 
-  // 3. Build result with weighted selection
-  let result: string[] = [];
+  // 3. Build candidate pool with weighted selection
+  let candidatePool: string[] = [];
 
-  // Always include critical items first
-  result.push(...criticalItems);
+  // Include critical items
+  candidatePool.push(...criticalItems);
 
   // Add current session words with weighted selection
   const remainingCurrentSession = currentSessionWords.filter(
-    key => !result.includes(key)
+    key => !candidatePool.includes(key)
   );
   
   if (remainingCurrentSession.length > 0) {
-    const selectedCurrent = weightedRandomSelection(
-      remainingCurrentSession,
-      progress,
-      now,
-      Math.min(remainingCurrentSession.length, ITEMS_PER_QUIZ_BATCH - result.length)
+    const neededFromCurrent = Math.min(
+      remainingCurrentSession.length, 
+      Math.ceil(ITEMS_PER_QUIZ_BATCH * 0.6) - candidatePool.length // ~60% from current session
     );
-    result.push(...selectedCurrent);
+    
+    if (neededFromCurrent > 0) {
+      const selectedCurrent = weightedRandomSelection(
+        remainingCurrentSession,
+        progress,
+        now,
+        neededFromCurrent
+      );
+      candidatePool.push(...selectedCurrent);
+    }
   }
 
   // Fill remaining slots with new words
@@ -190,7 +213,7 @@ export const getDueWords = (state: AppState, library: Library): string[] => {
   if (remainingSlots > 0 && newPotentialWords.length > 0) {
     const neededNewWords = Math.min(
       remainingSlots,
-      Math.max(0, ITEMS_PER_QUIZ_BATCH - result.length)
+      Math.max(0, ITEMS_PER_QUIZ_BATCH - candidatePool.length)
     );
     
     if (neededNewWords > 0) {
@@ -200,11 +223,35 @@ export const getDueWords = (state: AppState, library: Library): string[] => {
         now,
         neededNewWords
       );
-      result.push(...selectedNew);
+      candidatePool.push(...selectedNew);
     }
   }
 
-  return result;
+  // 4. CRITICAL: Shuffle the final list to randomize positions
+  // This prevents users from predicting word order based on priority
+  return shuffleArray(candidatePool);
+};
+
+// NEW: Get a random description index that's different from the last one shown
+export const getRandomDescriptionIndex = (
+  descriptions: string[],
+  lastUsedIndex?: number
+): number => {
+  if (descriptions.length <= 1) return 0;
+  
+  // If we have a last used index, try to pick a different one
+  if (typeof lastUsedIndex === 'number') {
+    const availableIndices = descriptions
+      .map((_, idx) => idx)
+      .filter(idx => idx !== lastUsedIndex);
+    
+    if (availableIndices.length > 0) {
+      return availableIndices[Math.floor(Math.random() * availableIndices.length)];
+    }
+  }
+  
+  // Fallback to random
+  return Math.floor(Math.random() * descriptions.length);
 };
 
 export const updateWordProgress = (
@@ -228,7 +275,7 @@ export const updateWordProgress = (
         todayFailCount: 0,
         todaySuccessCount: 0,
         history: [],
-        isHard: false // Default
+        isHard: false
       };
   
   // Backwards compatibility check
