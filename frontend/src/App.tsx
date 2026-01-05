@@ -3,7 +3,7 @@ import Header from './components/Header';
 import FlipCard from './components/FlipCard';
 import LibraryView from './components/LibraryView';
 import type { AppState, QuizItem, Library, WordProgress } from './types';
-import { getSessionState, getDueWords, updateWordProgress, ITEMS_PER_QUIZ_BATCH, getRandomDescriptionIndex } from './utils/srsLogic';
+import { getSessionState, getDueWords, updateWordProgress, getNextDescriptionIndex } from './utils/srsLogic';
 import { fetchLibrary, fetchUserState, saveUserState } from './api';
 
 const App: React.FC = () => {
@@ -13,12 +13,6 @@ const App: React.FC = () => {
   const [currentRatings, setCurrentRatings] = useState<Record<string, 'remember' | 'forget'>>({});
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [loading, setLoading] = useState(true);
-  
-  // Track last used description indices to avoid repetition
-  const [lastDescriptionIndices, setLastDescriptionIndices] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('vokabel_last_descriptions');
-    return saved ? JSON.parse(saved) : {};
-  });
   
   // Navigation State with Persistence
   const [currentView, setCurrentView] = useState<'quiz' | 'library'>(() => {
@@ -30,6 +24,35 @@ const App: React.FC = () => {
     setCurrentView(view);
     localStorage.setItem('vokabel_view', view);
   };
+
+  // NEW: Save quiz state to localStorage
+  const saveQuizState = useCallback((queue: QuizItem[], ratings: Record<string, 'remember' | 'forget'>) => {
+    if (queue.length > 0) {
+      localStorage.setItem('vokabel_quiz_queue', JSON.stringify(queue));
+      localStorage.setItem('vokabel_quiz_ratings', JSON.stringify(ratings));
+    } else {
+      localStorage.removeItem('vokabel_quiz_queue');
+      localStorage.removeItem('vokabel_quiz_ratings');
+    }
+  }, []);
+
+  // NEW: Load quiz state from localStorage
+  const loadQuizState = useCallback((): { queue: QuizItem[], ratings: Record<string, 'remember' | 'forget'> } | null => {
+    try {
+      const savedQueue = localStorage.getItem('vokabel_quiz_queue');
+      const savedRatings = localStorage.getItem('vokabel_quiz_ratings');
+      
+      if (savedQueue && savedRatings) {
+        return {
+          queue: JSON.parse(savedQueue),
+          ratings: JSON.parse(savedRatings)
+        };
+      }
+    } catch (error) {
+      console.error('Failed to load quiz state from localStorage', error);
+    }
+    return null;
+  }, []);
 
   // Initialization: Fetch Library AND User State
   useEffect(() => {
@@ -49,29 +72,15 @@ const App: React.FC = () => {
         // If date changed, we should save the reset state immediately
         if (processedState.lastSessionDate !== userData.lastSessionDate) {
           saveUserState(processedState);
-          // Clear quiz persistence on new day
-          localStorage.removeItem('vokabel_current_quiz');
-          localStorage.removeItem('vokabel_current_ratings');
+          // Clear saved quiz state on new day
+          localStorage.removeItem('vokabel_quiz_queue');
+          localStorage.removeItem('vokabel_quiz_ratings');
         } else {
-          // Try to restore quiz state from localStorage
-          const savedQuiz = localStorage.getItem('vokabel_current_quiz');
-          const savedRatings = localStorage.getItem('vokabel_current_ratings');
-          
-          if (savedQuiz && savedRatings) {
-            try {
-              const parsedQuiz = JSON.parse(savedQuiz);
-              const parsedRatings = JSON.parse(savedRatings);
-              
-              // Validate that the saved quiz items exist in library
-              const validQuiz = parsedQuiz.filter((item: QuizItem) => libData[item.wordId]);
-              
-              if (validQuiz.length > 0) {
-                setQuizQueue(validQuiz);
-                setCurrentRatings(parsedRatings);
-              }
-            } catch (e) {
-              console.error('Failed to restore quiz state', e);
-            }
+          // Try to restore quiz state if same day
+          const savedState = loadQuizState();
+          if (savedState) {
+            setQuizQueue(savedState.queue);
+            setCurrentRatings(savedState.ratings);
           }
         }
       } catch (error) {
@@ -82,25 +91,7 @@ const App: React.FC = () => {
     };
 
     initData();
-  }, []);
-
-  // Save quiz state to localStorage whenever it changes
-  useEffect(() => {
-    if (quizQueue.length > 0) {
-      localStorage.setItem('vokabel_current_quiz', JSON.stringify(quizQueue));
-    }
-  }, [quizQueue]);
-
-  useEffect(() => {
-    if (Object.keys(currentRatings).length > 0) {
-      localStorage.setItem('vokabel_current_ratings', JSON.stringify(currentRatings));
-    }
-  }, [currentRatings]);
-
-  // Save last description indices to localStorage
-  useEffect(() => {
-    localStorage.setItem('vokabel_last_descriptions', JSON.stringify(lastDescriptionIndices));
-  }, [lastDescriptionIndices]);
+  }, [loadQuizState]);
 
   // Generate Quiz Queue
   useEffect(() => {
@@ -108,42 +99,47 @@ const App: React.FC = () => {
 
     // Only regenerate queue if empty and session not marked complete
     if (quizQueue.length === 0 && !isSessionComplete) {
-      const currentBatchWordIds = quizQueue.map(item => item.wordId);
-      const dueWordIds = getDueWords(appState, library, currentBatchWordIds);
+      // Pass current queue word IDs to avoid immediate repeats
+      const currentWordIds = quizQueue.map(item => item.wordId);
+      const dueWordIds = getDueWords(appState, library, currentWordIds);
 
       if (dueWordIds.length === 0) {
         setIsSessionComplete(true);
         setQuizQueue([]);
-        // Clear persisted quiz state
-        localStorage.removeItem('vokabel_current_quiz');
-        localStorage.removeItem('vokabel_current_ratings');
+        localStorage.removeItem('vokabel_quiz_queue');
+        localStorage.removeItem('vokabel_quiz_ratings');
         return;
       }
 
-      const batchIds = dueWordIds.slice(0, ITEMS_PER_QUIZ_BATCH);
-      
-      const newQueue: QuizItem[] = batchIds.map(id => {
+      const newQueue: QuizItem[] = dueWordIds.map(id => {
         const data = library[id];
-        const lastIndex = lastDescriptionIndices[id];
-        const randomIndex = getRandomDescriptionIndex(data.Beschreibung, lastIndex);
+        const progress = appState.progress[id];
         
-        // Update last used index
-        setLastDescriptionIndices(prev => ({
-          ...prev,
-          [id]: randomIndex
-        }));
+        // Use the new function to get a different description index
+        const descriptionIndex = getNextDescriptionIndex(
+          data.Beschreibung.length, 
+          progress
+        );
         
         return {
           wordId: id,
           data: data,
-          descriptionIndex: randomIndex
+          descriptionIndex: descriptionIndex
         };
       });
 
       setQuizQueue(newQueue);
       setCurrentRatings({});
+      saveQuizState(newQueue, {});
     }
-  }, [appState, library, isSessionComplete, quizQueue.length, lastDescriptionIndices]);
+  }, [appState, library, isSessionComplete, quizQueue.length, saveQuizState, quizQueue]);
+
+  // NEW: Save quiz state whenever it changes
+  useEffect(() => {
+    if (quizQueue.length > 0) {
+      saveQuizState(quizQueue, currentRatings);
+    }
+  }, [quizQueue, currentRatings, saveQuizState]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -173,7 +169,8 @@ const App: React.FC = () => {
             todayFailCount: 0,
             todaySuccessCount: 0,
             history: [],
-            isHard: true
+            isHard: true,
+            lastUsedDescriptionIndex: undefined
           };
 
       const newState = {
@@ -198,17 +195,26 @@ const App: React.FC = () => {
     // Clone progress to ensure immutability
     newState.progress = { ...appState.progress };
     
+    // Update progress with ratings AND track which description was used
     Object.entries(currentRatings).forEach(([wordId, rating]) => {
-      newState = updateWordProgress(newState, wordId, rating as 'remember' | 'forget');
+      const quizItem = quizQueue.find(item => item.wordId === wordId);
+      const descriptionIndex = quizItem?.descriptionIndex;
+      
+      newState = updateWordProgress(
+        newState, 
+        wordId, 
+        rating as 'remember' | 'forget',
+        descriptionIndex
+      );
     });
 
     // Optimistic update
     setAppState(newState);
     setQuizQueue([]); // Clear queue to trigger regeneration or finish
     
-    // Clear persisted quiz state since we're moving to next batch
-    localStorage.removeItem('vokabel_current_quiz');
-    localStorage.removeItem('vokabel_current_ratings');
+    // Clear saved quiz state
+    localStorage.removeItem('vokabel_quiz_queue');
+    localStorage.removeItem('vokabel_quiz_ratings');
     
     // Save to Backend
     await saveUserState(newState);

@@ -19,7 +19,8 @@ export const getSessionState = (currentState: AppState): AppState => {
         status: (newProgress[key].status === 'mastered_today' || newProgress[key].status === 'failed_today') 
           ? 'review' 
           : newProgress[key].status,
-        history: []
+        history: [],
+        lastUsedDescriptionIndex: undefined // Reset description tracking
       };
     });
 
@@ -134,7 +135,7 @@ const weightedRandomSelection = (pool: string[], progress: Record<string, WordPr
   return selected;
 };
 
-// Fisher-Yates shuffle algorithm
+// Helper: Shuffle array randomly (Fisher-Yates algorithm)
 const shuffleArray = <T,>(array: T[]): T[] => {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -145,18 +146,14 @@ const shuffleArray = <T,>(array: T[]): T[] => {
 };
 
 // NEW: Select words for the current session with better mixing and randomization
-export const getDueWords = (
-  state: AppState, 
-  library: Library,
-  alreadyInCurrentBatch: string[] = []
-): string[] => {
+export const getDueWords = (state: AppState, library: Library, excludeWordIds: string[] = []): string[] => {
   const now = Date.now();
   const progress = state.progress;
   const libraryKeys = Object.keys(library);
 
-  // 1. Identify active pool: Not fully done for today AND not in current batch
+  // 1. Identify active pool: Not fully done for today and not currently in quiz
   const activePool = libraryKeys.filter(key => {
-    if (alreadyInCurrentBatch.includes(key)) return false;
+    if (excludeWordIds.includes(key)) return false; // Don't include words already in current quiz
     
     const p = progress[key];
     if (!p) return true; // New words
@@ -180,40 +177,33 @@ export const getDueWords = (
   );
 
   // 3. Build candidate pool with weighted selection
-  let candidatePool: string[] = [];
+  let candidates: string[] = [];
 
-  // Include critical items
-  candidatePool.push(...criticalItems);
+  // Include critical items (but don't guarantee they're first)
+  candidates.push(...criticalItems);
 
   // Add current session words with weighted selection
   const remainingCurrentSession = currentSessionWords.filter(
-    key => !candidatePool.includes(key)
+    key => !candidates.includes(key)
   );
   
   if (remainingCurrentSession.length > 0) {
-    const neededFromCurrent = Math.min(
-      remainingCurrentSession.length, 
-      Math.ceil(ITEMS_PER_QUIZ_BATCH * 0.6) - candidatePool.length // ~60% from current session
+    const selectedCurrent = weightedRandomSelection(
+      remainingCurrentSession,
+      progress,
+      now,
+      Math.min(remainingCurrentSession.length, ITEMS_PER_QUIZ_BATCH * 2) // Get more than needed for better mixing
     );
-    
-    if (neededFromCurrent > 0) {
-      const selectedCurrent = weightedRandomSelection(
-        remainingCurrentSession,
-        progress,
-        now,
-        neededFromCurrent
-      );
-      candidatePool.push(...selectedCurrent);
-    }
+    candidates.push(...selectedCurrent);
   }
 
-  // Fill remaining slots with new words
+  // Fill with new words if there's room
   const remainingSlots = MAX_UNIQUE_WORDS_PER_DAY - state.dailyUniqueWords.length;
   
-  if (remainingSlots > 0 && newPotentialWords.length > 0) {
+  if (remainingSlots > 0 && newPotentialWords.length > 0 && candidates.length < ITEMS_PER_QUIZ_BATCH * 2) {
     const neededNewWords = Math.min(
       remainingSlots,
-      Math.max(0, ITEMS_PER_QUIZ_BATCH - candidatePool.length)
+      Math.max(0, ITEMS_PER_QUIZ_BATCH * 2 - candidates.length)
     );
     
     if (neededNewWords > 0) {
@@ -223,41 +213,42 @@ export const getDueWords = (
         now,
         neededNewWords
       );
-      candidatePool.push(...selectedNew);
+      candidates.push(...selectedNew);
     }
   }
 
-  // 4. CRITICAL: Shuffle the final list to randomize positions
-  // This prevents users from predicting word order based on priority
-  return shuffleArray(candidatePool);
+  // 4. RANDOMIZE the final selection - this is key to preventing position-based memorization
+  const shuffledCandidates = shuffleArray(candidates);
+  
+  // 5. Take only what we need for this batch
+  return shuffledCandidates.slice(0, ITEMS_PER_QUIZ_BATCH);
 };
 
-// NEW: Get a random description index that's different from the last one shown
-export const getRandomDescriptionIndex = (
-  descriptions: string[],
-  lastUsedIndex?: number
+// NEW: Get a different description index than the last one used
+export const getNextDescriptionIndex = (
+  totalDescriptions: number,
+  progress: WordProgress | undefined
 ): number => {
-  if (descriptions.length <= 1) return 0;
+  if (totalDescriptions <= 1) return 0;
   
-  // If we have a last used index, try to pick a different one
-  if (typeof lastUsedIndex === 'number') {
-    const availableIndices = descriptions
-      .map((_, idx) => idx)
-      .filter(idx => idx !== lastUsedIndex);
-    
-    if (availableIndices.length > 0) {
-      return availableIndices[Math.floor(Math.random() * availableIndices.length)];
-    }
+  const lastIndex = progress?.lastUsedDescriptionIndex;
+  
+  if (lastIndex === undefined) {
+    return Math.floor(Math.random() * totalDescriptions);
   }
   
-  // Fallback to random
-  return Math.floor(Math.random() * descriptions.length);
+  // Pick a random index that's different from the last one
+  const availableIndices = Array.from({ length: totalDescriptions }, (_, i) => i)
+    .filter(i => i !== lastIndex);
+  
+  return availableIndices[Math.floor(Math.random() * availableIndices.length)];
 };
 
 export const updateWordProgress = (
   state: AppState, 
   wordId: string, 
-  rating: 'remember' | 'forget'
+  rating: 'remember' | 'forget',
+  usedDescriptionIndex?: number
 ): AppState => {
   const now = Date.now();
   const nextState = { ...state };
@@ -275,11 +266,17 @@ export const updateWordProgress = (
         todayFailCount: 0,
         todaySuccessCount: 0,
         history: [],
-        isHard: false
+        isHard: false,
+        lastUsedDescriptionIndex: undefined
       };
   
   // Backwards compatibility check
   if (typeof progress.isHard === 'undefined') progress.isHard = false;
+  
+  // Track which description was used
+  if (usedDescriptionIndex !== undefined) {
+    progress.lastUsedDescriptionIndex = usedDescriptionIndex;
+  }
 
   progress.history = [...progress.history];
   if (progress.todaySuccessCount === undefined) progress.todaySuccessCount = 0;
