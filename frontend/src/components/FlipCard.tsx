@@ -157,6 +157,27 @@ const FlipCard: React.FC<FlipCardProps> = ({
                 </div>
               </div>
             )}
+
+            {data.Kontext && (
+              <div className="bg-slate-800 p-3 rounded text-sm">
+                <span className="text-xs text-slate-500 uppercase block mb-2">Kontext</span>
+                <p className="text-slate-300 leading-relaxed">{data.Kontext}</p>
+              </div>
+            )}
+
+            {data.Beispiele && data.Beispiele.length > 0 && (
+              <div className="bg-slate-800 p-3 rounded text-sm">
+                <span className="text-xs text-slate-500 uppercase block mb-2">Beispiele</span>
+                <ul className="space-y-2">
+                  {data.Beispiele.map((beispiel, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="text-brand-400 text-xs mt-0.5">•</span>
+                      <span className="text-slate-300 leading-relaxed flex-1">{beispiel}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Action Buttons - Back */}

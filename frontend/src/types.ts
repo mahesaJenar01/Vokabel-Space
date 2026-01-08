@@ -9,6 +9,8 @@ export interface VocabularyItem {
   Vergleichsmessung?: Record<string, string>;
   Antonym?: Record<string, { Bedeutung: { Englisch: string[]; Indonesisch: string[] } }>;
   Synonym?: Record<string, { Bedeutung: { Englisch: string[]; Indonesisch: string[] } }>;
+  Beispiele?: string[];
+  Kontext?: string;
 }
 
 export type Library = Record<string, VocabularyItem>;
